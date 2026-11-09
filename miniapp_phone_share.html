@@ -1,0 +1,27 @@
+<!-- Add Telegram's Web App SDK to your Mini App HTML before your own script. -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script>
+const tg = window.Telegram.WebApp;
+tg.ready();
+tg.expand();
+
+// On the page opened by the bot's "Share Phone Number" inline button:
+if (new URLSearchParams(window.location.search).get("share_phone") === "1") {
+  if (typeof tg.requestContact === "function") {
+    tg.requestContact((shared) => {
+      if (shared) {
+        // Telegram sends the contact to the bot as a contact message.
+        // The bot then replies with the normal Mini App launch button.
+        document.body.insertAdjacentHTML(
+          "beforeend",
+          "<p>Thank you. Your contact was shared with the bot.</p>"
+        );
+      } else {
+        alert("Phone sharing was cancelled.");
+      }
+    });
+  } else {
+    alert("Please open this page in the Telegram app to share your phone number.");
+  }
+}
+</script>
