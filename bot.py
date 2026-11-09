@@ -1,8 +1,11 @@
 import hmac
+import hashlib
+import json
 import logging
 import os
 import re
 import sqlite3
+from urllib.parse import parse_qsl
 
 from aiohttp import web
 from telegram import (
@@ -143,12 +146,21 @@ def app_keyboard(lang):
 
 
 async def show_language_menu(message):
+    # Title and language instructions appear in one message; the
+    # three language buttons are attached directly underneath it.
     prompt = (
-        "Maaloo Afaan filadhaa.\n"
-        "እባክዎ ቋንቋ ይምረጡ።\n"
+        "🚗 **Getachew Fikadu Jirata**\\n\\n"
+        "Maaloo Afaan filadhaa.\\n"
+        "━━━━━━━━━━━━━━\\n"
+        "እባክዎ ቋንቋ ይምረጡ።\\n"
+        "━━━━━━━━━━━━━━\\n"
         "Please select your language."
     )
-    await message.reply_text(prompt, reply_markup=language_keyboard())
+    await message.reply_text(
+        prompt,
+        reply_markup=language_keyboard(),
+        parse_mode="Markdown",
+    )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -241,14 +253,58 @@ async def health(request):
     return web.Response(text="OK")
 
 
+def telegram_webapp_user_id(init_data):
+    """Validate Telegram Mini App initData and return the authenticated user ID."""
+    if not init_data or len(init_data) > 10000:
+        return None
+    try:
+        fields = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+        received_hash = fields.pop("hash", "")
+        if not received_hash:
+            return None
+        data_check_string = "\\n".join(
+            f"{key}={value}" for key, value in sorted(fields.items())
+        )
+        secret_key = hmac.new(
+            b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256
+        ).digest()
+        calculated_hash = hmac.new(
+            secret_key, data_check_string.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(calculated_hash, received_hash):
+            return None
+        user_data = json.loads(fields.get("user", "{}"))
+        user_id = user_data.get("id")
+        if not isinstance(user_id, int) or user_id <= 0:
+            return None
+        return user_id
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def contact_api_response(request, payload, status=200):
+    response = web.json_response(payload, status=status)
+    origin = request.headers.get("Origin", "")
+    if origin == APP_URL:
+        response.headers["Access-Control-Allow-Origin"] = APP_URL
+        response.headers["Vary"] = "Origin"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    return response
+
+
 async def contact_lookup(request):
-    received_secret = request.headers.get("X-Bot-Contact-Secret", "")
-    if not hmac.compare_digest(received_secret, CONTACT_SYNC_SECRET):
-        return web.json_response({"success": False, "error": "Authentication failed."}, status=403)
-    telegram_id = request.query.get("telegram_id", "")
-    if not re.fullmatch(r"[1-9][0-9]{0,19}", telegram_id):
-        return web.json_response({"success": False, "error": "Invalid Telegram user ID."}, status=400)
-    return web.json_response({"success": True, "phone": get_phone(int(telegram_id))})
+    if request.method == "OPTIONS":
+        return contact_api_response(request, {"success": True})
+    try:
+        body = await request.json()
+    except Exception:
+        return contact_api_response(request, {"success": False, "error": "Invalid request."}, 400)
+    user_id = telegram_webapp_user_id(body.get("initData", ""))
+    if not user_id:
+        return contact_api_response(request, {"success": False, "error": "Telegram verification failed. Open this page inside Telegram."}, 403)
+    phone = get_phone(user_id)
+    return contact_api_response(request, {"success": True, "phone": phone})
 
 
 async def webhook(request):
@@ -291,7 +347,7 @@ application.add_error_handler(error_handler)
 
 app = web.Application()
 app.router.add_get("/health", health)
-app.router.add_get("/api/contact", contact_lookup)
+app.router.add_route("*", "/api/contact", contact_lookup)
 app.router.add_post(f"/{WEBHOOK_PATH}/{{secret}}", webhook)
 app.on_startup.append(startup)
 app.on_cleanup.append(cleanup)
