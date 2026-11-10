@@ -11,7 +11,7 @@ import aiohttp
 from aiohttp import web
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, MenuButtonWebApp
+    KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler,
@@ -115,50 +115,8 @@ def app_keyboard(lang):
     return InlineKeyboardMarkup([[InlineKeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]])
 
 
-async def configure_chat_menu_button(bot, user_id, lang):
-    """Sets the Telegram chat menu button (bottom-left) to directly open the Mini App."""
-    try:
-        label = WORDS.get(lang, WORDS["am"])["open_app"]
-        await bot.set_chat_menu_button(
-            chat_id=user_id,
-            menu_button=MenuButtonWebApp(text=label, web_app=WebAppInfo(url=APP_URL))
-        )
-    except Exception:
-        pass
-
-
 # Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message, user = update.effective_message, update.effective_user
-    if not message or not user:
-        return
-
-    # If the user already shared their phone number, do NOT show another start!
-    # Directly show the Mini App button and set the menu button to open the app.
-    if get_phone(user.id):
-        lang = get_lang(user.id)
-        words = WORDS.get(lang, WORDS["am"])
-        await configure_chat_menu_button(context.bot, user.id, lang)
-        await message.reply_text(
-            f"{words['received']}\n\n{words['open_prompt']}",
-            reply_markup=app_keyboard(lang)
-        )
-        return
-
-    # New user: show language selection menu
-    prompt = (
-        "🚗 <b>Getachew Fikadu Jirata</b>\n\n"
-        "Maaloo Afaan filadhaa.\n"
-        "___________________\n"
-        "እባክዎ ቋንቋ ይምረጡ።\n"
-        "___________________\n"
-        "Please select your language."
-    )
-    await message.reply_text(prompt, reply_markup=language_inline_keyboard(), parse_mode="HTML")
-
-
-async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Allows users to explicitly change language anytime via /language without resetting phone."""
     message = update.effective_message
     if not message:
         return
@@ -173,11 +131,9 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(prompt, reply_markup=language_inline_keyboard(), parse_mode="HTML")
 
 
-async def send_phone_or_app(message, user_id, lang, bot=None):
+async def send_phone_or_app(message, user_id, lang):
     words = WORDS.get(lang, WORDS["am"])
     if get_phone(user_id):
-        if bot:
-            await configure_chat_menu_button(bot, user_id, lang)
         await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
     else:
         await message.reply_text(words["phone_prompt"], reply_markup=phone_keyboard(lang))
@@ -190,7 +146,7 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user and lang in WORDS:
         set_user(user.id, lang=lang)
-        await send_phone_or_app(query.message, user.id, lang, context.bot)
+        await send_phone_or_app(query.message, user.id, lang)
 
 
 async def choose_language_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -200,7 +156,7 @@ async def choose_language_text(update: Update, context: ContextTypes.DEFAULT_TYP
     lang = LANGUAGE_CHOICES.get(message.text.strip())
     if lang:
         set_user(user.id, lang=lang)
-        await send_phone_or_app(message, user.id, lang, context.bot)
+        await send_phone_or_app(message, user.id, lang)
 
 
 async def sync_contact_to_website(telegram_id: int, phone: str):
@@ -240,11 +196,7 @@ async def got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(words["sync_error"], reply_markup=phone_keyboard(lang))
         return
 
-    # Sync to website and configure the bottom-left menu button to directly open app
     asyncio.create_task(sync_contact_to_website(user.id, contact.phone_number))
-    await configure_chat_menu_button(context.bot, user.id, lang)
-
-    # Send Step 3 confirmation with direct Mini App button
     await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
 
 
@@ -335,7 +287,6 @@ async def cleanup(app):
 # Application Setup
 application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("language", language_command))
 application.add_handler(CallbackQueryHandler(language_callback, pattern=r"^lang_(om|am|en)$"))
 application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.CONTACT, got_contact))
 application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, choose_language_text))
