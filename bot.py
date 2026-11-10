@@ -136,10 +136,7 @@ def language_keyboard():
 
 def phone_keyboard(lang):
     return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton(WORDS[lang]["share_phone"], request_contact=True)],
-            [WORDS[lang]["change_language"]],
-        ],
+        [[KeyboardButton(WORDS[lang]["share_phone"], request_contact=True)]],
         resize_keyboard=True,
         one_time_keyboard=False,
     )
