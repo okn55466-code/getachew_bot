@@ -155,9 +155,9 @@ async def show_language_menu(message):
     prompt = (
         "🚗 **Getachew Fikadu Jirata**\\n\\n"
         "Maaloo Afaan filadhaa.\\n"
-        "━━━━━━━━━━━━━━\\n"
+        "\\n"
         "እባክዎ ቋንቋ ይምረጡ።\\n"
-        "━━━━━━━━━━━━━━\\n"
+        "\\n"
         "Please select your language."
     )
     await message.reply_text(
