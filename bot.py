@@ -171,3 +171,272 @@ async def show_language_menu(message):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_message:
+        await show_language_menu(update.effective_message)
+
+
+async def send_phone_or_app(message, user_id, lang):
+    words = WORDS[lang]
+    if get_phone(user_id):
+        await message.reply_text(
+            words["already_saved"],
+            reply_markup=app_keyboard(lang),
+        )
+    else:
+        await message.reply_text(
+            words["phone_prompt"],
+            reply_markup=phone_keyboard(lang),
+        )
+
+
+async def apply_language(message, user, lang):
+    set_user(user.id, lang=lang)
+    await send_phone_or_app(message, user.id, lang)
+
+
+async def choose_language_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not user or not message.text:
+        return
+    if message.text.strip() in {words["change_language"] for words in WORDS.values()}:
+        await show_language_menu(message)
+        return
+    lang = LANGUAGE_CHOICES.get(message.text.strip())
+    if lang:
+        await apply_language(message, user, lang)
+
+
+async def show_languages_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await show_language_menu(query.message)
+
+
+async def sync_contact_to_website(telegram_id: int, phone: str):
+    if not APP_URL or not CONTACT_SYNC_SECRET:
+        return
+    sync_url = f"{APP_URL}/api/bot-contact.php"
+    try:
+        headers = {
+            "X-Bot-Contact-Secret": CONTACT_SYNC_SECRET,
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; TelegramBotContactSync/1.0)",
+        }
+        payload = {"telegram_id": str(telegram_id), "phone": str(phone)}
+        timeout = aiohttp.ClientTimeout(total=6)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(sync_url, json=payload, headers=headers) as resp:
+                if resp.status == 200:
+                    logger.info("Successfully synced contact for user %s to website %s", telegram_id, sync_url)
+                else:
+                    text = await resp.text()
+                    logger.warning("Website contact sync returned HTTP %s: %s", resp.status, text[:200])
+    except Exception as e:
+        logger.warning("Website contact sync error: %s", e)
+
+
+async def got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    user = update.effective_user
+    contact = message.contact if message else None
+    if not user or not contact or not contact.phone_number:
+        return
+
+    # Telegram Contact.user_id is optional; only reject if it explicitly
+    # identifies a different Telegram account.
+    if contact.user_id is not None and contact.user_id != user.id:
+        lang = get_lang(user.id)
+        await message.reply_text(
+            WORDS[lang]["wrong_contact"],
+            reply_markup=phone_keyboard(lang),
+        )
+        return
+
+    try:
+        set_user(user.id, phone=contact.phone_number)
+    except Exception:
+        logger.exception("Failed to save contact for Telegram user %s", user.id)
+        lang = get_lang(user.id)
+        await message.reply_text(
+            WORDS[lang]["sync_error"],
+            reply_markup=phone_keyboard(lang),
+        )
+        return
+
+    # Sync to PHP website in background
+    asyncio.create_task(sync_contact_to_website(user.id, contact.phone_number))
+
+    lang = get_lang(user.id)
+    await message.reply_text(WORDS[lang]["received"], reply_markup=ReplyKeyboardRemove())
+    await message.reply_text(
+        WORDS[lang]["open_prompt"],
+        reply_markup=app_keyboard(lang),
+    )
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Unhandled Telegram update error", exc_info=context.error)
+
+
+async def health(request):
+    return web.Response(text="OK")
+
+
+def telegram_webapp_user_id(init_data):
+    """Validate Telegram Mini App initData and return the authenticated user ID."""
+    if not init_data or len(init_data) > 10000:
+        return None
+    try:
+        fields = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+        received_hash = fields.pop("hash", "")
+        if not received_hash:
+            return None
+        data_check_string = "\n".join(
+            f"{key}={value}" for key, value in sorted(fields.items())
+        )
+        secret_key = hmac.new(
+            b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256
+        ).digest()
+        calculated_hash = hmac.new(
+            secret_key, data_check_string.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(calculated_hash, received_hash):
+            return None
+        user_data = json.loads(fields.get("user", "{}"))
+        user_id = user_data.get("id")
+        if not isinstance(user_id, int) or user_id <= 0:
+            return None
+        return user_id
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def contact_api_response(request, payload, status=200):
+    response = web.json_response(payload, status=status)
+    origin = request.headers.get("Origin", "")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = (
+        "Content-Type, X-Telegram-Init-Data, X-Bot-Contact-Secret, Authorization"
+    )
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    return response
+
+
+async def contact_lookup(request):
+    if request.method == "OPTIONS":
+        return contact_api_response(request, {"success": True})
+
+    # 1. Server-to-server secret authentication (e.g. from PHP backend)
+    secret_header = request.headers.get("X-Bot-Contact-Secret", "").strip()
+    secret_param = request.query.get("secret", "").strip()
+    secret_matched = False
+    if secret_header and hmac.compare_digest(secret_header, CONTACT_SYNC_SECRET):
+        secret_matched = True
+    elif secret_param and hmac.compare_digest(secret_param, CONTACT_SYNC_SECRET):
+        secret_matched = True
+
+    if request.method == "GET":
+        if secret_matched:
+            telegram_id_str = str(request.query.get("telegram_id", "")).strip()
+            if telegram_id_str.isdigit():
+                phone = get_phone(int(telegram_id_str))
+                return contact_api_response(request, {"success": True, "phone": phone})
+            return contact_api_response(request, {"success": False, "error": "Invalid telegram_id."}, 400)
+
+        # Telegram Mini App client-side GET with initData query param
+        init_data = request.query.get("initData", "").strip()
+        if init_data:
+            user_id = telegram_webapp_user_id(init_data)
+            if user_id:
+                phone = get_phone(user_id)
+                return contact_api_response(request, {"success": True, "phone": phone, "user_id": user_id})
+            return contact_api_response(request, {"success": False, "error": "Telegram verification failed."}, 403)
+
+        return contact_api_response(request, {"success": False, "error": "Unauthorized contact lookup."}, 403)
+
+    if request.method == "POST":
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            try:
+                body = dict(await request.post())
+            except Exception:
+                body = {}
+
+        # Server-to-server POST with secret in body
+        body_secret = str(body.get("secret", "")).strip()
+        if (not secret_matched) and body_secret and hmac.compare_digest(body_secret, CONTACT_SYNC_SECRET):
+            secret_matched = True
+
+        if secret_matched:
+            telegram_id_str = str(body.get("telegram_id", "") or request.query.get("telegram_id", "")).strip()
+            if telegram_id_str.isdigit():
+                phone = get_phone(int(telegram_id_str))
+                return contact_api_response(request, {"success": True, "phone": phone})
+            return contact_api_response(request, {"success": False, "error": "Invalid telegram_id."}, 400)
+
+        # Telegram Mini App client-side POST with initData in body or header
+        init_data = (body.get("initData") or request.headers.get("X-Telegram-Init-Data", "")).strip()
+        user_id = telegram_webapp_user_id(init_data)
+        if not user_id:
+            return contact_api_response(request, {"success": False, "error": "Telegram verification failed. Open this page inside Telegram."}, 403)
+        phone = get_phone(user_id)
+        return contact_api_response(request, {"success": True, "phone": phone, "user_id": user_id})
+
+    return contact_api_response(request, {"success": False, "error": "Method not allowed."}, 405)
+
+
+async def webhook(request):
+    if request.match_info["secret"] != WEBHOOK_SECRET:
+        return web.Response(status=403)
+    update = Update.de_json(await request.json(), application.bot)
+    await application.process_update(update)
+    return web.Response(text="OK")
+
+
+async def startup(app):
+    init_db()
+    await application.initialize()
+    await application.start()
+    webhook_url = f"{RENDER_EXTERNAL_URL}/{WEBHOOK_PATH}/{WEBHOOK_SECRET}"
+    await application.bot.set_webhook(
+        webhook_url,
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=False,
+    )
+    logger.info("Telegram webhook configured successfully for %s/%s/[hidden]",
+                RENDER_EXTERNAL_URL, WEBHOOK_PATH)
+
+
+async def cleanup(app):
+    # Do not delete the Telegram webhook on ordinary Render shutdown/restart.
+    await application.stop()
+    await application.shutdown()
+
+
+application = Application.builder().token(BOT_TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CallbackQueryHandler(show_languages_callback, pattern=r"^show_languages$"))
+application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.CONTACT, got_contact))
+application.add_handler(MessageHandler(
+    filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+    choose_language_text
+))
+application.add_error_handler(error_handler)
+
+app = web.Application()
+app.router.add_get("/health", health)
+app.router.add_route("*", "/api/contact", contact_lookup)
+app.router.add_post(f"/{WEBHOOK_PATH}/{{secret}}", webhook)
+app.on_startup.append(startup)
+app.on_cleanup.append(cleanup)
+
+if __name__ == "__main__":
+    web.run_app(app, host="0.0.0.0", port=PORT)
