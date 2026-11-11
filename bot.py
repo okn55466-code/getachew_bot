@@ -140,7 +140,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Users who shared their phone number get the Mini App button in the reply keyboard.
-    if get_phone(user.id):
+    if await get_saved_phone(user.id):
         lang = get_lang(user.id)
         words = WORDS.get(lang, WORDS["am"])
         await message.reply_text(
@@ -167,7 +167,7 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message, user = update.effective_message, update.effective_user
     if not message:
         return
-    if user and not get_phone(user.id):
+    if user and not await get_saved_phone(user.id):
         await reset_chat_menu_button(context.bot, user.id)
     prompt = (
         "🚗 <b>Getachew Fikadu Jirata</b>\n\n"
@@ -182,7 +182,7 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_phone_or_app(message, user_id, lang, bot):
     words = WORDS.get(lang, WORDS["am"])
-    if get_phone(user_id):
+    if await get_saved_phone(user_id):
         await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
     else:
         await reset_chat_menu_button(bot, user_id)
@@ -226,7 +226,8 @@ async def choose_language_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def sync_contact_to_website(telegram_id: int, phone: str):
     if not APP_URL or not CONTACT_SYNC_SECRET:
-        return
+        logger.error("Contact sync is not configured; the website will not retain the shared phone number")
+        return False
     sync_url = f"{APP_URL}/api/bot-contact.php"
     headers = {"X-Bot-Contact-Secret": CONTACT_SYNC_SECRET, "Content-Type": "application/json"}
     payload = {"telegram_id": str(telegram_id), "phone": str(phone), "language": get_lang(telegram_id)}
@@ -235,10 +236,45 @@ async def sync_contact_to_website(telegram_id: int, phone: str):
             async with session.post(sync_url, json=payload, headers=headers) as resp:
                 if resp.status == 200:
                     logger.info("Synced contact for user %s to website", telegram_id)
+                    return True
                 else:
                     logger.warning("Contact sync returned HTTP %s", resp.status)
     except Exception as e:
         logger.warning("Website contact sync error: %s", e)
+    return False
+
+
+async def get_saved_phone(telegram_id: int):
+    phone = get_phone(telegram_id)
+    if phone:
+        return phone
+    if not APP_URL or not CONTACT_SYNC_SECRET:
+        return None
+
+    url = f"{APP_URL}/api/bot-contact.php"
+    headers = {"X-Bot-Contact-Secret": CONTACT_SYNC_SECRET}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+            async with session.get(url, params={"telegram_id": str(telegram_id)}, headers=headers) as response:
+                if response.status != 200:
+                    logger.warning("Website contact lookup returned HTTP %s", response.status)
+                    return None
+                result = await response.json()
+    except Exception as error:
+        logger.warning("Website contact lookup failed: %s", error)
+        return None
+
+    if not isinstance(result, dict) or not result.get("success"):
+        logger.warning("Website contact lookup returned an unsuccessful response")
+        return None
+    language = result.get("language")
+    if language in WORDS:
+        set_user(telegram_id, lang=language)
+    phone = result.get("phone")
+    if isinstance(phone, str) and phone:
+        set_user(telegram_id, phone=phone)
+        return phone
+    return None
 
 
 async def got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -261,10 +297,10 @@ async def got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(words["sync_error"], reply_markup=phone_keyboard(lang))
         return
 
-    # Sync the verified contact to the website.
-    asyncio.create_task(sync_contact_to_website(user.id, contact.phone_number))
+    # Save the contact on the website before offering the Mini App button.
+    await sync_contact_to_website(user.id, contact.phone_number)
 
-    # Replace the contact button with the Mini App button in the reply keyboard.
+    # Show the Mini App button after the website has saved the shared contact.
     await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
 
 
@@ -320,13 +356,15 @@ async def contact_lookup(request):
     if secret and hmac.compare_digest(str(secret).strip(), CONTACT_SYNC_SECRET):
         if telegram_id and str(telegram_id).strip().isdigit():
             tid = int(telegram_id)
-            return contact_api_response(request, {"success": True, "phone": get_phone(tid), "language": get_lang(tid)})
+            phone = await get_saved_phone(tid)
+            return contact_api_response(request, {"success": True, "phone": phone, "language": get_lang(tid)})
         return contact_api_response(request, {"success": False, "error": "Invalid telegram_id"}, 400)
 
     # 2. Telegram Mini App authentication using initData
     user_id = telegram_webapp_user_id(str(init_data).strip()) if init_data else None
     if user_id:
-        return contact_api_response(request, {"success": True, "phone": get_phone(user_id), "language": get_lang(user_id), "user_id": user_id})
+        phone = await get_saved_phone(user_id)
+        return contact_api_response(request, {"success": True, "phone": phone, "language": get_lang(user_id), "user_id": user_id})
 
     return contact_api_response(request, {"success": False, "error": "Unauthorized contact lookup"}, 403)
 
