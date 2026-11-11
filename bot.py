@@ -11,8 +11,7 @@ import aiohttp
 from aiohttp import web
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, MenuButtonWebApp,
-    MenuButtonCommands
+    KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, MenuButtonCommands
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler,
@@ -38,8 +37,8 @@ WORDS = {
         "phone_prompt": "ለመቀጠል የስልክ ቁጥርዎን ያጋሩ። ከታች በቻቱ ኪቦርድ ያለውን «2 📱 ስልክ ቁጥር አጋራ» ቁልፍ ይጫኑ።",
         "share_phone": "2 📱 ስልክ ቁጥር አጋራ",
         "received": "የስልክ ቁጥር ተቀብለናል ✅",
-        "open_prompt": "መተግበሪያውን ለመክፈት ከታች ያለውን ቁልፍ ይጫኑ::",
-        "open_app": "3 Getachew Fikadu app 🚗",
+        "open_prompt": "መተግበሪያውን ለመክፈት ከታች በቻቱ ኪቦርድ ያለውን «Getachew Fikadu app 🚗» ቁልፍ ይጫኑ።",
+        "open_app": "Getachew Fikadu app 🚗",
         "wrong_contact": "እባክዎ የራስዎን ስልክ ቁጥር ብቻ ያጋሩ። ከታች በቻቱ ኪቦርድ ያለውን «2 📱 ስልክ ቁጥር አጋራ» ቁልፍ ይጫኑ።",
         "sync_error": "የስልክ ቁጥርዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ::",
     },
@@ -47,8 +46,8 @@ WORDS = {
         "phone_prompt": "Itti fufuuf lakkoofsa bilbilaa keessan qoodaa. Qabduu «2 📱 Lakkoofsa bilbilaa qoodaa» kan kiiboordii gadii jiru tuqaa.",
         "share_phone": "2 📱 Lakkoofsa bilbilaa qoodaa",
         "received": "Lakkoofsa bilbilaa fudhanneerra ✅",
-        "open_prompt": "Appii banuuf buttonii armaan gadii tuqaa::",
-        "open_app": "3 Getachew Fikadu app 🚗",
+        "open_prompt": "Appii banuuf qabduu «Getachew Fikadu app 🚗» kan kiiboordii gadii jiru tuqaa.",
+        "open_app": "Getachew Fikadu app 🚗",
         "wrong_contact": "Maaloo lakkoofsa bilbilaa keessan qofa qoodaa. Qabduu «2 📱 Lakkoofsa bilbilaa qoodaa» kan kiiboordii gadii jiru tuqaa.",
         "sync_error": "Lakkoofsa bilbilaa keessan kuusuu hin dandeenye. Maaloo irra deebi'aa::",
     },
@@ -56,8 +55,8 @@ WORDS = {
         "phone_prompt": "Please share your phone number to continue. Tap “2 📱 Share phone number” in the keyboard at the bottom of this chat.",
         "share_phone": "2 📱 Share phone number",
         "received": "Phone number received ✅",
-        "open_prompt": "Tap the button below to open the app::",
-        "open_app": "3 Getachew Fikadu app 🚗",
+        "open_prompt": "Tap “Getachew Fikadu app 🚗” in the keyboard at the bottom of this chat to open the app.",
+        "open_app": "Getachew Fikadu app 🚗",
         "wrong_contact": "Please share your own phone number. Tap “2 📱 Share phone number” in the keyboard at the bottom of this chat.",
         "sync_error": "We couldn't save your phone number. Please try again::",
     },
@@ -117,19 +116,19 @@ def phone_keyboard(lang):
 
 def app_keyboard(lang):
     label = WORDS.get(lang, WORDS["am"])["open_app"]
-    return InlineKeyboardMarkup([[InlineKeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]])
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 
-async def configure_chat_menu_button(bot, user_id, lang):
-    """Sets the Telegram chat menu button (bottom-left) to directly open the Mini App."""
+async def reset_chat_menu_button(bot, user_id):
+    """Remove a previously configured per-chat Mini App shortcut before phone sharing."""
     try:
-        label = WORDS.get(lang, WORDS["am"])["open_app"]
-        await bot.set_chat_menu_button(
-            chat_id=user_id,
-            menu_button=MenuButtonWebApp(text=label, web_app=WebAppInfo(url=APP_URL))
-        )
+        await bot.set_chat_menu_button(chat_id=user_id, menu_button=MenuButtonCommands())
     except Exception:
-        pass
+        logger.exception("Could not reset the menu button for user %s", user_id)
 
 
 # Bot Handlers
@@ -138,18 +137,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message or not user:
         return
 
-    # If the user already shared their phone number, do NOT show another start!
-    # Directly show the Mini App button and set the menu button to open the app.
+    # Users who shared their phone number get the Mini App button in the reply keyboard.
     if get_phone(user.id):
         lang = get_lang(user.id)
         words = WORDS.get(lang, WORDS["am"])
-        await configure_chat_menu_button(context.bot, user.id, lang)
         await message.reply_text(
             f"{words['received']}\n\n{words['open_prompt']}",
             reply_markup=app_keyboard(lang)
         )
         return
 
+    await reset_chat_menu_button(context.bot, user.id)
     # New user: show language selection menu
     prompt = (
         "🚗 <b>Getachew Fikadu Jirata</b>\n\n"
@@ -164,9 +162,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Allows users to explicitly change language anytime via /language without resetting phone."""
-    message = update.effective_message
+    message, user = update.effective_message, update.effective_user
     if not message:
         return
+    if user and not get_phone(user.id):
+        await reset_chat_menu_button(context.bot, user.id)
     prompt = (
         "🚗 <b>Getachew Fikadu Jirata</b>\n\n"
         "Maaloo Afaan filadhaa.\n"
@@ -178,13 +178,12 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(prompt, reply_markup=language_inline_keyboard(), parse_mode="HTML")
 
 
-async def send_phone_or_app(message, user_id, lang, bot=None):
+async def send_phone_or_app(message, user_id, lang, bot):
     words = WORDS.get(lang, WORDS["am"])
     if get_phone(user_id):
-        if bot:
-            await configure_chat_menu_button(bot, user_id, lang)
         await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
     else:
+        await reset_chat_menu_button(bot, user_id)
         await message.reply_text(words["phone_prompt"], reply_markup=phone_keyboard(lang))
 
 
@@ -245,11 +244,10 @@ async def got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(words["sync_error"], reply_markup=phone_keyboard(lang))
         return
 
-    # Sync to website and configure the bottom-left menu button to directly open app
+    # Sync the verified contact to the website.
     asyncio.create_task(sync_contact_to_website(user.id, contact.phone_number))
-    await configure_chat_menu_button(context.bot, user.id, lang)
 
-    # Send Step 3 confirmation with direct Mini App button
+    # Replace the contact button with the Mini App button in the reply keyboard.
     await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
 
 
