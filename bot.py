@@ -111,13 +111,12 @@ def phone_keyboard(lang):
 
 
 def app_keyboard(lang):
-    # Keep the app button in Telegram's bottom reply-keyboard position,
-    # replacing the request-contact button after the user's contact is received.
     label = WORDS.get(lang, WORDS["am"])["open_app"]
+    # Show the Mini App launch button as a full-width reply-keyboard button,
+    # matching the screenshot (below the bot's confirmation message).
     return ReplyKeyboardMarkup(
         [[KeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]],
         resize_keyboard=True,
-        one_time_keyboard=False,
         is_persistent=True,
     )
 
