@@ -130,7 +130,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "___________________\n"
         "Please select your language."
     )
-    await message.reply_text(prompt, reply_markup=language_inline_keyboard(), parse_mode="HTML")
+    # First clear any persistent reply keyboard left by an older deployment.
+    sent = await message.reply_text(
+        prompt,
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="HTML",
+    )
+    # Then put the language choices under this same message.
+    await sent.edit_reply_markup(reply_markup=language_inline_keyboard())
 
 
 async def send_phone_or_app(message, user_id, lang):
