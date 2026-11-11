@@ -11,7 +11,7 @@ import aiohttp
 from aiohttp import web
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, WebAppInfo
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler,
@@ -112,13 +112,9 @@ def phone_keyboard(lang):
 
 def app_keyboard(lang):
     label = WORDS.get(lang, WORDS["am"])["open_app"]
-    # Show the Mini App launch button as a full-width reply-keyboard button,
-    # matching the screenshot (below the bot's confirmation message).
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]
+    ])
 
 
 # Bot Handlers
@@ -140,7 +136,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_phone_or_app(message, user_id, lang):
     words = WORDS.get(lang, WORDS["am"])
     if get_phone(user_id):
-        await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
+        sent = await message.reply_text(
+            f"{words['received']}\n\n{words['open_prompt']}",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await sent.edit_reply_markup(reply_markup=app_keyboard(lang))
     else:
         await message.reply_text(words["phone_prompt"], reply_markup=phone_keyboard(lang))
 
@@ -203,7 +203,11 @@ async def got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     asyncio.create_task(sync_contact_to_website(user.id, contact.phone_number))
-    await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
+    sent = await message.reply_text(
+        f"{words['received']}\n\n{words['open_prompt']}",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await sent.edit_reply_markup(reply_markup=app_keyboard(lang))
 
 
 # Web API Helpers
