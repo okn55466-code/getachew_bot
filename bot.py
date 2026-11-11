@@ -39,6 +39,7 @@ WORDS = {
         "received": "የስልክ ቁጥር ተቀብለናል ✅",
         "open_prompt": "መተግበሪያውን ለመክፈት ከዚህ መልዕክት በታች ያለውን ቁልፍ ይጫኑ።",
         "open_app": "Getachew Fikadu app 🚗",
+        "change_language": "ቋንቋ ቀይር",
         "wrong_contact": "እባክዎ የራስዎን ስልክ ቁጥር ብቻ ያጋሩ። የኪቦርድ/ካሬ ምልክቱን በመጫን «2 📱 ስልክ ቁጥር አጋራ» ይጫኑ።",
         "sync_error": "የስልክ ቁጥርዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ::",
     },
@@ -48,6 +49,7 @@ WORDS = {
         "received": "Lakkoofsa bilbilaa fudhanneerra ✅",
         "open_prompt": "Appii banuuf qabduu armaan gadii tuqaa.",
         "open_app": "Getachew Fikadu app 🚗",
+        "change_language": "Afaan jijjiiri",
         "wrong_contact": "Maaloo lakkoofsa bilbilaa keessan qofa qoodaa. Mallattoo kiiboordii/iskuweerii tuqaa, achiis «2 📱 Lakkoofsa bilbilaa qoodaa» tuqaa.",
         "sync_error": "Lakkoofsa bilbilaa keessan kuusuu hin dandeenye. Maaloo irra deebi'aa::",
     },
@@ -57,6 +59,7 @@ WORDS = {
         "received": "Phone number received ✅",
         "open_prompt": "Tap the button below to open the app.",
         "open_app": "Getachew Fikadu app 🚗",
+        "change_language": "Change language",
         "wrong_contact": "Please share your own phone number. Tap the small keyboard/squares icon beside the message box, then tap “2 📱 Share phone number.”",
         "sync_error": "We couldn't save your phone number. Please try again::",
     },
@@ -115,8 +118,11 @@ def phone_keyboard(lang):
 
 
 def app_keyboard(lang):
-    label = WORDS.get(lang, WORDS["am"])["open_app"]
-    return InlineKeyboardMarkup([[InlineKeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]])
+    words = WORDS.get(lang, WORDS["am"])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(words["open_app"], web_app=WebAppInfo(url=APP_URL))],
+        [InlineKeyboardButton(words["change_language"], callback_data="change_language")]
+    ])
 
 
 async def reset_chat_menu_button(bot, user_id):
@@ -190,7 +196,19 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user and lang in WORDS:
         set_user(user.id, lang=lang)
+        phone = get_phone(user.id)
+        if phone:
+            asyncio.create_task(sync_contact_to_website(user.id, phone))
         await send_phone_or_app(query.message, user.id, lang, context.bot)
+
+
+async def change_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Please select your language / ቋንቋ ይምረጡ / Afaan filadhaa:",
+        reply_markup=language_inline_keyboard()
+    )
 
 
 async def choose_language_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -200,6 +218,9 @@ async def choose_language_text(update: Update, context: ContextTypes.DEFAULT_TYP
     lang = LANGUAGE_CHOICES.get(message.text.strip())
     if lang:
         set_user(user.id, lang=lang)
+        phone = get_phone(user.id)
+        if phone:
+            asyncio.create_task(sync_contact_to_website(user.id, phone))
         await send_phone_or_app(message, user.id, lang, context.bot)
 
 
@@ -254,6 +275,7 @@ def telegram_webapp_user_id(init_data):
     try:
         fields = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
         received_hash = fields.pop("hash", "")
+        fields.pop("signature", None)
         if not received_hash:
             return None
         data_check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
@@ -342,6 +364,7 @@ application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("language", language_command))
 application.add_handler(CallbackQueryHandler(language_callback, pattern=r"^lang_(om|am|en)$"))
+application.add_handler(CallbackQueryHandler(change_language_callback, pattern=r"^change_language$"))
 application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.CONTACT, got_contact))
 application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, choose_language_text))
 
