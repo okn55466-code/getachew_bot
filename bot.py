@@ -34,30 +34,30 @@ DB_PATH = os.environ.get("DB_PATH", "/tmp/getachew_bot.sqlite3")
 # Language texts matching screenshots exactly
 WORDS = {
     "am": {
-        "phone_prompt": "ለመቀጠል የስልክ ቁጥርዎን ያጋሩ። ከታች በቻቱ ኪቦርድ ያለውን «2 📱 ስልክ ቁጥር አጋራ» ቁልፍ ይጫኑ።",
+        "phone_prompt": "ለመቀጠል የስልክ ቁጥርዎን ያጋሩ። ከመልዕክት መጻፊያው አጠገብ ያለውን የኪቦርድ/ካሬ ምልክት በመጫን ኪቦርዱን ይክፈቱ፣ ከዚያ «2 📱 ስልክ ቁጥር አጋራ» ይጫኑ።",
         "share_phone": "2 📱 ስልክ ቁጥር አጋራ",
         "received": "የስልክ ቁጥር ተቀብለናል ✅",
-        "open_prompt": "መተግበሪያውን ለመክፈት ከታች በቻቱ ኪቦርድ ያለውን «Getachew Fikadu app 🚗» ቁልፍ ይጫኑ።",
+        "open_prompt": "መተግበሪያውን ለመክፈት ከዚህ መልዕክት በታች ያለውን ቁልፍ ይጫኑ።",
         "open_app": "Getachew Fikadu app 🚗",
-        "wrong_contact": "እባክዎ የራስዎን ስልክ ቁጥር ብቻ ያጋሩ። ከታች በቻቱ ኪቦርድ ያለውን «2 📱 ስልክ ቁጥር አጋራ» ቁልፍ ይጫኑ።",
+        "wrong_contact": "እባክዎ የራስዎን ስልክ ቁጥር ብቻ ያጋሩ። የኪቦርድ/ካሬ ምልክቱን በመጫን «2 📱 ስልክ ቁጥር አጋራ» ይጫኑ።",
         "sync_error": "የስልክ ቁጥርዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ::",
     },
     "om": {
-        "phone_prompt": "Itti fufuuf lakkoofsa bilbilaa keessan qoodaa. Qabduu «2 📱 Lakkoofsa bilbilaa qoodaa» kan kiiboordii gadii jiru tuqaa.",
+        "phone_prompt": "Itti fufuuf lakkoofsa bilbilaa keessan qoodaa. Mallattoo kiiboordii/iskuweerii cina sanduuqa ergaa tuqaa; kiiboordiin yoo baname, «2 📱 Lakkoofsa bilbilaa qoodaa» tuqaa.",
         "share_phone": "2 📱 Lakkoofsa bilbilaa qoodaa",
         "received": "Lakkoofsa bilbilaa fudhanneerra ✅",
-        "open_prompt": "Appii banuuf qabduu «Getachew Fikadu app 🚗» kan kiiboordii gadii jiru tuqaa.",
+        "open_prompt": "Appii banuuf qabduu armaan gadii tuqaa.",
         "open_app": "Getachew Fikadu app 🚗",
-        "wrong_contact": "Maaloo lakkoofsa bilbilaa keessan qofa qoodaa. Qabduu «2 📱 Lakkoofsa bilbilaa qoodaa» kan kiiboordii gadii jiru tuqaa.",
+        "wrong_contact": "Maaloo lakkoofsa bilbilaa keessan qofa qoodaa. Mallattoo kiiboordii/iskuweerii tuqaa, achiis «2 📱 Lakkoofsa bilbilaa qoodaa» tuqaa.",
         "sync_error": "Lakkoofsa bilbilaa keessan kuusuu hin dandeenye. Maaloo irra deebi'aa::",
     },
     "en": {
-        "phone_prompt": "Please share your phone number to continue. Tap “2 📱 Share phone number” in the keyboard at the bottom of this chat.",
+        "phone_prompt": "Please share your phone number to continue. Tap the small keyboard/squares icon beside the message box to show the keyboard, then tap “2 📱 Share phone number.”",
         "share_phone": "2 📱 Share phone number",
         "received": "Phone number received ✅",
-        "open_prompt": "Tap “Getachew Fikadu app 🚗” in the keyboard at the bottom of this chat to open the app.",
+        "open_prompt": "Tap the button below to open the app.",
         "open_app": "Getachew Fikadu app 🚗",
-        "wrong_contact": "Please share your own phone number. Tap “2 📱 Share phone number” in the keyboard at the bottom of this chat.",
+        "wrong_contact": "Please share your own phone number. Tap the small keyboard/squares icon beside the message box, then tap “2 📱 Share phone number.”",
         "sync_error": "We couldn't save your phone number. Please try again::",
     },
 }
@@ -116,11 +116,7 @@ def phone_keyboard(lang):
 
 def app_keyboard(lang):
     label = WORDS.get(lang, WORDS["am"])["open_app"]
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]])
 
 
 async def reset_chat_menu_button(bot, user_id):
