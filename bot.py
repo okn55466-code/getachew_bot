@@ -10,8 +10,8 @@ from urllib.parse import parse_qsl
 import aiohttp
 from aiohttp import web
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardMarkup, WebAppInfo, MenuButtonCommands, MenuButtonWebApp
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler,
@@ -29,35 +29,44 @@ WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 CONTACT_SYNC_SECRET = os.environ["CONTACT_SYNC_SECRET"]
 PORT = int(os.environ.get("PORT", "10000"))
 RENDER_EXTERNAL_URL = os.environ["RENDER_EXTERNAL_URL"].rstrip("/")
-DB_PATH = os.environ.get("DB_PATH", "/tmp/getachew_bot.sqlite3")
+DB_PATH = os.environ.get(
+    "DB_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "getachew_bot.sqlite3"),
+)
 
 # Language texts matching screenshots exactly
 WORDS = {
     "am": {
-        "phone_prompt": "ለመቀጠል የስልክ ቁጥርዎን ያጋሩ::",
+        "phone_prompt": "ለመቀጠል የስልክ ቁጥርዎን ያጋሩ። ከመልዕክት መጻፊያው አጠገብ ያለውን የኪቦርድ/ካሬ ምልክት በመጫን ኪቦርዱን ይክፈቱ፣ ከዚያ «2 📱 ስልክ ቁጥር አጋራ» ይጫኑ።",
         "share_phone": "2 📱 ስልክ ቁጥር አጋራ",
         "received": "የስልክ ቁጥር ተቀብለናል ✅",
-        "open_prompt": "መተግበሪያውን ለመክፈት ከታች ያለውን ቁልፍ ይጫኑ::",
-        "open_app": "3 Getachew Fikadu app 🚗",
-        "wrong_contact": "እባክዎ ከታች ያለውን ቁልፍ በመጠቀም የራስዎን ስልክ ቁጥር ያጋሩ::",
+        "open_prompt": "መተግበሪያውን ለመክፈት ከዚህ መልዕክት በታች ያለውን ቁልፍ ይጫኑ።",
+        "open_app": "Getachew Fikadu app 🚗",
+        "menu_app": "Open app",
+        "change_language": "ቋንቋ ቀይር",
+        "wrong_contact": "እባክዎ የራስዎን ስልክ ቁጥር ብቻ ያጋሩ። የኪቦርድ/ካሬ ምልክቱን በመጫን «2 📱 ስልክ ቁጥር አጋራ» ይጫኑ።",
         "sync_error": "የስልክ ቁጥርዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ::",
     },
     "om": {
-        "phone_prompt": "Itti fufuuf maaloo lakkoofsa bilbilaa keessan qoodaa::",
+        "phone_prompt": "Itti fufuuf lakkoofsa bilbilaa keessan qoodaa. Mallattoo kiiboordii/iskuweerii cina sanduuqa ergaa tuqaa; kiiboordiin yoo baname, «2 📱 Lakkoofsa bilbilaa qoodaa» tuqaa.",
         "share_phone": "2 📱 Lakkoofsa bilbilaa qoodaa",
         "received": "Lakkoofsa bilbilaa fudhanneerra ✅",
-        "open_prompt": "Appii banuuf buttonii armaan gadii tuqaa::",
-        "open_app": "3 Getachew Fikadu app 🚗",
-        "wrong_contact": "Maaloo buttonii armaan gadii fayyadamuun lakkoofsa bilbilaa keessan qoodaa::",
+        "open_prompt": "Appii banuuf qabduu armaan gadii tuqaa.",
+        "open_app": "Getachew Fikadu app 🚗",
+        "menu_app": "Open app",
+        "change_language": "Afaan jijjiiri",
+        "wrong_contact": "Maaloo lakkoofsa bilbilaa keessan qofa qoodaa. Mallattoo kiiboordii/iskuweerii tuqaa, achiis «2 📱 Lakkoofsa bilbilaa qoodaa» tuqaa.",
         "sync_error": "Lakkoofsa bilbilaa keessan kuusuu hin dandeenye. Maaloo irra deebi'aa::",
     },
     "en": {
-        "phone_prompt": "Please share your phone number to continue::",
+        "phone_prompt": "Please share your phone number to continue. Tap the small keyboard/squares icon beside the message box to show the keyboard, then tap “2 📱 Share phone number.”",
         "share_phone": "2 📱 Share phone number",
         "received": "Phone number received ✅",
-        "open_prompt": "Tap the button below to open the app::",
-        "open_app": "3 Getachew Fikadu app 🚗",
-        "wrong_contact": "Please share your own phone number using the button below::",
+        "open_prompt": "Tap the button below to open the app.",
+        "open_app": "Getachew Fikadu app 🚗",
+        "menu_app": "Open app",
+        "change_language": "Change language",
+        "wrong_contact": "Please share your own phone number. Tap the small keyboard/squares icon beside the message box, then tap “2 📱 Share phone number.”",
         "sync_error": "We couldn't save your phone number. Please try again::",
     },
 }
@@ -107,19 +116,67 @@ def language_inline_keyboard():
 
 def phone_keyboard(lang):
     label = WORDS.get(lang, WORDS["am"])["share_phone"]
-    return ReplyKeyboardMarkup([[KeyboardButton(label, request_contact=True)]], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton(label, request_contact=True)]],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 
 def app_keyboard(lang):
-    label = WORDS.get(lang, WORDS["am"])["open_app"]
-    return InlineKeyboardMarkup([[InlineKeyboardButton(label, web_app=WebAppInfo(url=APP_URL))]])
+    words = WORDS.get(lang, WORDS["am"])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(words["open_app"], web_app=WebAppInfo(url=APP_URL))],
+        [InlineKeyboardButton(words["change_language"], callback_data="change_language")]
+    ])
+
+
+def secrets_match(left, right):
+    try:
+        return hmac.compare_digest(str(left).strip(), str(right).strip())
+    except Exception:
+        return False
+
+
+async def reset_chat_menu_button(bot, user_id):
+    """Remove a previously configured per-chat Mini App shortcut before phone sharing."""
+    try:
+        await bot.set_chat_menu_button(chat_id=user_id, menu_button=MenuButtonCommands())
+    except Exception:
+        logger.exception("Could not reset the menu button for user %s", user_id)
+
+
+async def enable_mini_app_for_user(bot, user_id, lang):
+    words = WORDS.get(lang, WORDS["am"])
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=user_id,
+            menu_button=MenuButtonWebApp(text=words["menu_app"], web_app=WebAppInfo(url=APP_URL)),
+        )
+    except Exception:
+        logger.exception("Could not set the Mini App menu button for user %s", user_id)
+
+
+async def send_app_open_message(message, lang, bot, user_id):
+    words = WORDS.get(lang, WORDS["am"])
+    await enable_mini_app_for_user(bot, user_id, lang)
+    await message.reply_text(
+        f"{words['received']}\n\n{words['open_prompt']}",
+        reply_markup=app_keyboard(lang),
+    )
 
 
 # Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.effective_message
-    if not message:
+    message, user = update.effective_message, update.effective_user
+    if not message or not user:
         return
+
+    if await get_saved_phone(user.id):
+        await send_app_open_message(message, get_lang(user.id), context.bot, user.id)
+        return
+
+    await reset_chat_menu_button(context.bot, user.id)
     prompt = (
         "🚗 <b>Getachew Fikadu Jirata</b>\n\n"
         "Maaloo Afaan filadhaa.\n"
@@ -131,11 +188,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(prompt, reply_markup=language_inline_keyboard(), parse_mode="HTML")
 
 
-async def send_phone_or_app(message, user_id, lang):
+async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allows users to explicitly change language anytime via /language without resetting phone."""
+    message, user = update.effective_message, update.effective_user
+    if not message:
+        return
+    if user and not await get_saved_phone(user.id):
+        await reset_chat_menu_button(context.bot, user.id)
+    prompt = (
+        "🚗 <b>Getachew Fikadu Jirata</b>\n\n"
+        "Maaloo Afaan filadhaa.\n"
+        "___________________\n"
+        "እባክዎ ቋንቋ ይምረጡ።\n"
+        "___________________\n"
+        "Please select your language."
+    )
+    await message.reply_text(prompt, reply_markup=language_inline_keyboard(), parse_mode="HTML")
+
+
+async def send_phone_or_app(message, user_id, lang, bot):
     words = WORDS.get(lang, WORDS["am"])
-    if get_phone(user_id):
-        await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
+    if await get_saved_phone(user_id):
+        await send_app_open_message(message, lang, bot, user_id)
     else:
+        await reset_chat_menu_button(bot, user_id)
         await message.reply_text(words["phone_prompt"], reply_markup=phone_keyboard(lang))
 
 
@@ -146,7 +222,19 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user and lang in WORDS:
         set_user(user.id, lang=lang)
-        await send_phone_or_app(query.message, user.id, lang)
+        phone = get_phone(user.id)
+        if phone:
+            asyncio.create_task(sync_contact_to_website(user.id, phone))
+        await send_phone_or_app(query.message, user.id, lang, context.bot)
+
+
+async def change_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Please select your language / ቋንቋ ይምረጡ / Afaan filadhaa:",
+        reply_markup=language_inline_keyboard()
+    )
 
 
 async def choose_language_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -156,24 +244,63 @@ async def choose_language_text(update: Update, context: ContextTypes.DEFAULT_TYP
     lang = LANGUAGE_CHOICES.get(message.text.strip())
     if lang:
         set_user(user.id, lang=lang)
-        await send_phone_or_app(message, user.id, lang)
+        phone = get_phone(user.id)
+        if phone:
+            asyncio.create_task(sync_contact_to_website(user.id, phone))
+        await send_phone_or_app(message, user.id, lang, context.bot)
 
 
 async def sync_contact_to_website(telegram_id: int, phone: str):
     if not APP_URL or not CONTACT_SYNC_SECRET:
-        return
+        logger.error("Contact sync is not configured; the website will not retain the shared phone number")
+        return False
     sync_url = f"{APP_URL}/api/bot-contact.php"
     headers = {"X-Bot-Contact-Secret": CONTACT_SYNC_SECRET, "Content-Type": "application/json"}
-    payload = {"telegram_id": str(telegram_id), "phone": str(phone)}
+    payload = {"telegram_id": str(telegram_id), "phone": str(phone), "language": get_lang(telegram_id)}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6)) as session:
             async with session.post(sync_url, json=payload, headers=headers) as resp:
                 if resp.status == 200:
                     logger.info("Synced contact for user %s to website", telegram_id)
+                    return True
                 else:
                     logger.warning("Contact sync returned HTTP %s", resp.status)
     except Exception as e:
         logger.warning("Website contact sync error: %s", e)
+    return False
+
+
+async def get_saved_phone(telegram_id: int):
+    phone = get_phone(telegram_id)
+    if phone:
+        return phone
+    if not APP_URL or not CONTACT_SYNC_SECRET:
+        return None
+
+    url = f"{APP_URL}/api/bot-contact.php"
+    headers = {"X-Bot-Contact-Secret": CONTACT_SYNC_SECRET}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+            async with session.get(url, params={"telegram_id": str(telegram_id)}, headers=headers) as response:
+                if response.status != 200:
+                    logger.warning("Website contact lookup returned HTTP %s", response.status)
+                    return None
+                result = await response.json()
+    except Exception as error:
+        logger.warning("Website contact lookup failed: %s", error)
+        return None
+
+    if not isinstance(result, dict) or not result.get("success"):
+        logger.warning("Website contact lookup returned an unsuccessful response")
+        return None
+    language = result.get("language")
+    if language in WORDS:
+        set_user(telegram_id, lang=language)
+    phone = result.get("phone")
+    if isinstance(phone, str) and phone:
+        set_user(telegram_id, phone=phone)
+        return phone
+    return None
 
 
 async def got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -196,17 +323,21 @@ async def got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(words["sync_error"], reply_markup=phone_keyboard(lang))
         return
 
-    asyncio.create_task(sync_contact_to_website(user.id, contact.phone_number))
-    await message.reply_text(f"{words['received']}\n\n{words['open_prompt']}", reply_markup=app_keyboard(lang))
+    await sync_contact_to_website(user.id, contact.phone_number)
+    await send_app_open_message(message, lang, context.bot, user.id)
 
 
 # Web API Helpers
 def telegram_webapp_user_id(init_data):
-    if not init_data or len(init_data) > 10000:
+    if not init_data or len(init_data) > 16384:
         return None
     try:
-        fields = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+        try:
+            fields = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+        except ValueError:
+            fields = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=False))
         received_hash = fields.pop("hash", "")
+        fields.pop("signature", None)
         if not received_hash:
             return None
         data_check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
@@ -247,16 +378,17 @@ async def contact_lookup(request):
         telegram_id = telegram_id or body.get("telegram_id")
         init_data = init_data or body.get("initData")
 
-    # 1. Server-to-server secret authentication (e.g. from PHP backend)
-    if secret and hmac.compare_digest(str(secret).strip(), CONTACT_SYNC_SECRET):
+    if secret and secrets_match(secret, CONTACT_SYNC_SECRET):
         if telegram_id and str(telegram_id).strip().isdigit():
-            return contact_api_response(request, {"success": True, "phone": get_phone(int(telegram_id))})
+            tid = int(telegram_id)
+            phone = await get_saved_phone(tid)
+            return contact_api_response(request, {"success": True, "phone": phone, "language": get_lang(tid)})
         return contact_api_response(request, {"success": False, "error": "Invalid telegram_id"}, 400)
 
-    # 2. Telegram Mini App authentication using initData
     user_id = telegram_webapp_user_id(str(init_data).strip()) if init_data else None
     if user_id:
-        return contact_api_response(request, {"success": True, "phone": get_phone(user_id), "user_id": user_id})
+        phone = await get_saved_phone(user_id)
+        return contact_api_response(request, {"success": True, "phone": phone, "language": get_lang(user_id), "user_id": user_id})
 
     return contact_api_response(request, {"success": False, "error": "Unauthorized contact lookup"}, 403)
 
@@ -277,6 +409,11 @@ async def startup(app):
     webhook_url = f"{RENDER_EXTERNAL_URL}/{WEBHOOK_PATH}/{WEBHOOK_SECRET}"
     await application.bot.set_webhook(webhook_url, allowed_updates=Update.ALL_TYPES, drop_pending_updates=False)
     logger.info("Webhook configured for %s/%s/[hidden]", RENDER_EXTERNAL_URL, WEBHOOK_PATH)
+    try:
+        await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Default chat menu button reset; Mini App is available after phone sharing")
+    except Exception as e:
+        logger.warning("Could not reset default chat menu button: %s", e)
 
 
 async def cleanup(app):
@@ -287,7 +424,9 @@ async def cleanup(app):
 # Application Setup
 application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("language", language_command))
 application.add_handler(CallbackQueryHandler(language_callback, pattern=r"^lang_(om|am|en)$"))
+application.add_handler(CallbackQueryHandler(change_language_callback, pattern=r"^change_language$"))
 application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.CONTACT, got_contact))
 application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, choose_language_text))
 
