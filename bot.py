@@ -11,7 +11,7 @@ import aiohttp
 from aiohttp import web
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
-    ReplyKeyboardMarkup, WebAppInfo, MenuButtonCommands, MenuButtonWebApp
+    ReplyKeyboardMarkup, WebAppInfo, MenuButtonCommands
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler,
@@ -42,7 +42,6 @@ WORDS = {
         "received": "የስልክ ቁጥር ተቀብለናል ✅",
         "open_prompt": "መተግበሪያውን ለመክፈት ከዚህ መልዕክት በታች ያለውን ቁልፍ ይጫኑ።",
         "open_app": "Getachew Fikadu app 🚗",
-        "menu_app": "Open app",
         "change_language": "ቋንቋ ቀይር",
         "wrong_contact": "እባክዎ የራስዎን ስልክ ቁጥር ብቻ ያጋሩ። የኪቦርድ/ካሬ ምልክቱን በመጫን «2 📱 ስልክ ቁጥር አጋራ» ይጫኑ።",
         "sync_error": "የስልክ ቁጥርዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ::",
@@ -53,7 +52,6 @@ WORDS = {
         "received": "Lakkoofsa bilbilaa fudhanneerra ✅",
         "open_prompt": "Appii banuuf qabduu armaan gadii tuqaa.",
         "open_app": "Getachew Fikadu app 🚗",
-        "menu_app": "Open app",
         "change_language": "Afaan jijjiiri",
         "wrong_contact": "Maaloo lakkoofsa bilbilaa keessan qofa qoodaa. Mallattoo kiiboordii/iskuweerii tuqaa, achiis «2 📱 Lakkoofsa bilbilaa qoodaa» tuqaa.",
         "sync_error": "Lakkoofsa bilbilaa keessan kuusuu hin dandeenye. Maaloo irra deebi'aa::",
@@ -64,7 +62,6 @@ WORDS = {
         "received": "Phone number received ✅",
         "open_prompt": "Tap the button below to open the app.",
         "open_app": "Getachew Fikadu app 🚗",
-        "menu_app": "Open app",
         "change_language": "Change language",
         "wrong_contact": "Please share your own phone number. Tap the small keyboard/squares icon beside the message box, then tap “2 📱 Share phone number.”",
         "sync_error": "We couldn't save your phone number. Please try again::",
@@ -139,27 +136,27 @@ def secrets_match(left, right):
 
 
 async def reset_chat_menu_button(bot, user_id):
-    """Remove a previously configured per-chat Mini App shortcut before phone sharing."""
+    """Remove a previously configured per-chat Mini App shortcut."""
     try:
         await bot.set_chat_menu_button(chat_id=user_id, menu_button=MenuButtonCommands())
     except Exception:
         logger.exception("Could not reset the menu button for user %s", user_id)
 
 
-async def enable_mini_app_for_user(bot, user_id, lang):
-    words = WORDS.get(lang, WORDS["am"])
-    try:
-        await bot.set_chat_menu_button(
-            chat_id=user_id,
-            menu_button=MenuButtonWebApp(text=words["menu_app"], web_app=WebAppInfo(url=APP_URL)),
-        )
-    except Exception:
-        logger.exception("Could not set the Mini App menu button for user %s", user_id)
+def language_prompt():
+    return (
+        "🚗 <b>Getachew Fikadu Jirata</b>\n\n"
+        "Maaloo Afaan filadhaa.\n"
+        "___________________\n"
+        "እባክዎ ቋንቋ ይምረጡ።\n"
+        "___________________\n"
+        "Please select your language."
+    )
 
 
 async def send_app_open_message(message, lang, bot, user_id):
     words = WORDS.get(lang, WORDS["am"])
-    await enable_mini_app_for_user(bot, user_id, lang)
+    await reset_chat_menu_button(bot, user_id)
     await message.reply_text(
         f"{words['received']}\n\n{words['open_prompt']}",
         reply_markup=app_keyboard(lang),
@@ -177,15 +174,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await reset_chat_menu_button(context.bot, user.id)
-    prompt = (
-        "🚗 <b>Getachew Fikadu Jirata</b>\n\n"
-        "Maaloo Afaan filadhaa.\n"
-        "___________________\n"
-        "እባክዎ ቋንቋ ይምረጡ።\n"
-        "___________________\n"
-        "Please select your language."
+    await message.reply_text(
+        language_prompt(),
+        reply_markup=language_inline_keyboard(),
+        parse_mode="HTML",
     )
-    await message.reply_text(prompt, reply_markup=language_inline_keyboard(), parse_mode="HTML")
 
 
 async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -195,15 +188,11 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if user and not await get_saved_phone(user.id):
         await reset_chat_menu_button(context.bot, user.id)
-    prompt = (
-        "🚗 <b>Getachew Fikadu Jirata</b>\n\n"
-        "Maaloo Afaan filadhaa.\n"
-        "___________________\n"
-        "እባክዎ ቋንቋ ይምረጡ።\n"
-        "___________________\n"
-        "Please select your language."
+    await message.reply_text(
+        language_prompt(),
+        reply_markup=language_inline_keyboard(),
+        parse_mode="HTML",
     )
-    await message.reply_text(prompt, reply_markup=language_inline_keyboard(), parse_mode="HTML")
 
 
 async def send_phone_or_app(message, user_id, lang, bot):
@@ -411,7 +400,7 @@ async def startup(app):
     logger.info("Webhook configured for %s/%s/[hidden]", RENDER_EXTERNAL_URL, WEBHOOK_PATH)
     try:
         await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-        logger.info("Default chat menu button reset; Mini App is available after phone sharing")
+        logger.info("Default chat menu button reset")
     except Exception as e:
         logger.warning("Could not reset default chat menu button: %s", e)
 
